@@ -1,0 +1,2 @@
+# KAGAMI
+Kagami.inc
