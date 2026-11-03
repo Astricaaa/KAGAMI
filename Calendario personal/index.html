@@ -3,45 +3,31 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#222f30" />
+    <meta name="theme-color" content="#0a0710" />
     <title>Kagami — tu espacio, a tu ritmo</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500&family=Geist:wght@400;500;600&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet" />
-    <link rel="stylesheet" href="styles.css" />
+    <link href="https://fonts.googleapis.com/css2?family=Caveat:wght@400;500;600;700&family=DM+Sans:wght@400;500&family=Fredoka:wght@500;600;700&family=Geist:wght@400;500;600&family=Parisienne&family=Roboto+Mono:wght@400&display=swap" rel="stylesheet" />
+    <link rel="stylesheet" href="styles.css?v=12" />
   </head>
   <body>
     <main id="app">
       <section id="intro" class="screen intro-screen">
-        <div class="intro-orbit orbit-one"></div>
-        <div class="intro-orbit orbit-two"></div>
-        <div class="intro-glow"></div>
         <div class="intro-content">
           <div class="brand brand-light"><span class="brand-mark">k</span><span>kagami</span></div>
           <div class="intro-copy">
-            <p class="eyebrow">UNA VENTANA HACIA TI.</p>
-            <h1>Todo lo que eres,<br /><span>en equilibrio.</span></h1>
-            <p class="intro-description">Tranquilo, sabemos que tienes otras obligaciones; por eso nos adaptamos a ti. Recuerda tus pendientes, aprende y haz espacio para lo que te hace bien.</p>
-            <div class="intro-pill"><span class="pulse-dot"></span> Un nuevo comienzo, a tu ritmo</div>
+            <h1>Bienvenido de nuevo,<br /><span>Astra.</span></h1>
             <button id="start-button" class="button button-light">Entrar a Kagami <span aria-hidden="true">↗</span></button>
           </div>
-          <div class="intro-footer"><span>Un lugar para volver a ti</span><span>01 — 02</span></div>
         </div>
-        <div class="intro-art" aria-hidden="true">
-          <div class="planet planet-large"></div>
-          <div class="planet planet-small"></div>
-          <div class="planet planet-ring"></div>
-          <div class="art-caption"><span class="art-caption-line"></span><span>PERSONAL · CONSCIENTE · TUYO</span></div>
-        </div>
+        <div class="intro-nebula" aria-hidden="true"></div>
       </section>
 
       <section id="auth" class="screen auth-screen hidden">
         <div class="auth-visual">
           <div class="brand brand-light"><span class="brand-mark">k</span><span>kagami</span></div>
           <div class="auth-visual-copy">
-            <span class="eyebrow">TU ESPACIO PERSONAL</span>
-            <h2>Un día a la vez.<br /><span>Todo en su lugar.</span></h2>
-            <p>Ayuda para recordar tus pendientes y espacio para aprender eso que siempre quisiste.</p>
+            <h2>“No hay rival más difícil de vencer que uno mismo; pero quien se conoce a sí mismo tiene la mejor oportunidad de hacerlo.”</h2>
           </div>
           <div class="auth-visual-bottom"><span>✦</span> Tu vida, con más intención</div>
           <div class="auth-glow"></div>
@@ -59,19 +45,13 @@
                 <label for="password">Contraseña</label>
                 <input id="password" name="password" type="password" autocomplete="current-password" placeholder="••••••••" required minlength="4" />
               </div>
-              <div id="otp-group">
-                <div class="label-row"><label for="otp">Verificación de dos pasos</label><span class="secure-label">2FA</span></div>
-                <input id="otp" name="otp" inputmode="numeric" autocomplete="one-time-code" placeholder="Código de 6 dígitos" pattern="[0-9]{6}" maxlength="6" required />
-                <p class="input-hint">Demo: usa el código <b>123456</b>.</p>
-              </div>
               <p id="auth-error" class="form-error" role="alert"></p>
               <button id="auth-submit" class="button button-primary button-full" type="submit">Entrar a mi espacio <span>→</span></button>
             </form>
             <div class="auth-links">
               <button id="create-account" class="text-button">Crear una cuenta</button>
-              <button id="forgot-password" class="text-button">Olvidé mi contraseña</button>
             </div>
-            <p class="demo-note">Prototipo local: tus datos se guardan en este dispositivo.</p>
+            <p class="demo-note">Prototipo local: las cuentas se guardan solo en este navegador; no hay una base de datos compartida.</p>
           </div>
         </div>
       </section>
@@ -116,7 +96,7 @@
 
       <section id="dashboard" class="screen dashboard-screen hidden">
         <header class="topbar">
-          <div class="brand"><span class="brand-mark">k</span><span>kagami</span><span class="brand-divider">/</span><span class="workspace-label">mi espacio</span></div>
+          <div class="brand"><img class="brand-mark" src="Astra.jpg" alt="Astra" /><span>kagami</span><span class="brand-divider">/</span><span id="workspace-user-name" class="workspace-label">mi espacio</span></div>
           <div class="topbar-right">
             <span class="today-label" id="today-label"></span>
             <button id="sidebar-toggle" class="top-icon-button" aria-label="Ocultar barra lateral" aria-expanded="true" title="Mostrar u ocultar barra lateral">☰</button>
@@ -126,39 +106,58 @@
             <button id="profile-button" class="profile-button" aria-label="Abrir perfil">U</button>
           </div>
         </header>
-        <aside class="sidebar" aria-label="Secciones">
-          <div class="side-label">TUS ESPACIOS</div>
-          <button class="nav-item active" data-panel="health" aria-label="Salud"><span class="nav-icon"><img src="SALUD.jpg" alt="" /></span><span>Salud</span></button>
-          <button class="nav-item active" data-panel="study" aria-label="Estudio"><span class="nav-icon"><img src="ESTUDIO.jpg" alt="" /></span><span>Estudio</span></button>
-          <button class="nav-item active" data-panel="finance" aria-label="Economía"><span class="nav-icon"><img src="ECONOMIA.jpg" alt="" /></span><span>Economía</span></button>
-          <button class="nav-item active" data-panel="fun" aria-label="Entretenimiento"><span class="nav-icon"><img src="ENTRETENIMIENTO.jpg" alt="" /></span><span>Entretenimiento</span></button>
-          <div class="sidebar-bottom"><button id="edit-profile" class="nav-item profile-nav"><span class="nav-icon">☷</span><span>Mi perfil</span></button><span class="sidebar-version">KAGAMI · BETA</span></div>
+        <aside class="sidebar" aria-label="Explorador de espacios">
+          <div class="side-label">EXPLORADOR</div>
+          <button class="nav-item nav-folder active" data-panel="health"><span class="folder-caret" aria-hidden="true">›</span><span class="folder-mark" aria-hidden="true"></span><span>Salud</span></button>
+          <button class="nav-item nav-folder active" data-panel="study"><span class="folder-caret" aria-hidden="true">›</span><span class="folder-mark" aria-hidden="true"></span><span>Estudio</span></button>
+          <button class="nav-item nav-folder active" data-panel="finance"><span class="folder-caret" aria-hidden="true">›</span><span class="folder-mark" aria-hidden="true"></span><span>Economía</span></button>
+          <button class="nav-item nav-folder active" data-panel="fun"><span class="folder-caret" aria-hidden="true">›</span><span class="folder-mark" aria-hidden="true"></span><span>Entretenimiento</span></button>
+          <div class="sidebar-bottom"><button id="edit-profile" class="nav-item nav-folder profile-nav"><span class="folder-caret" aria-hidden="true">›</span><span class="folder-mark" aria-hidden="true"></span><span>Mi perfil</span></button><span class="sidebar-version">KAGAMI · BETA</span></div>
         </aside>
         <div class="workspace">
         <div id="desktop-view">
-          <section id="canvas-view" class="canvas-view" aria-label="Lienzo personal">
-            <div class="canvas-toolbar">
-              <button id="canvas-tools-toggle" class="canvas-button canvas-tools-toggle" type="button" aria-label="Mostrar herramientas de dibujo" aria-controls="canvas-actions" aria-expanded="false" title="Mostrar herramientas de dibujo"><span>✎</span></button>
-              <div id="canvas-actions" class="canvas-actions" hidden>
-                <button id="draw-toggle" class="canvas-button" aria-pressed="false"><span>✎</span> Desbloquear dibujo</button>
-                <div class="canvas-palette" role="group" aria-label="Color del trazo">
-                  <button class="canvas-color selected" type="button" data-ink-color="moonlight" aria-label="Luz lunar" aria-pressed="true" title="Luz lunar"><span></span></button>
-                  <button class="canvas-color" type="button" data-ink-color="lavender" aria-label="Lavanda" aria-pressed="false" title="Lavanda"><span></span></button>
-                  <button class="canvas-color" type="button" data-ink-color="starlight" aria-label="Azul estelar" aria-pressed="false" title="Azul estelar"><span></span></button>
-                </div>
-                <label class="brush-size" for="brush-size">Trazo <input id="brush-size" type="range" min="1" max="14" value="3" /></label>
-                <button id="clear-canvas" class="canvas-button canvas-clear"><span>⌫</span> Borrar todo</button>
+          <section id="canvas-view" class="canvas-view math-view" aria-label="Pizarra matemática">
+            <header id="math-header" class="math-header">
+              <div><span class="math-kicker">KAGAMI · PIZARRA</span><h1>Canvas Math</h1></div>
+              <div class="math-header-actions">
+                <button id="math-theme-toggle" class="canvas-button" type="button" aria-pressed="false">Modo claro</button>
+                <button id="math-graph-toggle" class="canvas-button" type="button" aria-expanded="false" aria-controls="math-graph-panel">Gráfico</button>
               </div>
+            </header>
+            <div class="math-header-toggle-row">
+              <button id="math-header-toggle" class="canvas-button math-header-toggle" type="button" aria-expanded="true" aria-controls="math-header math-controls">Ocultar título y herramientas</button>
             </div>
-            <div id="canvas-sheet" class="canvas-sheet">
-              <canvas id="canvas-ink" aria-label="Dibuja aquí con tinta negra"></canvas>
+            <div id="math-controls" class="math-controls" role="toolbar" aria-label="Herramientas de la pizarra">
+              <button id="math-undo" class="canvas-button" type="button" aria-label="Deshacer" title="Deshacer">↶</button>
+              <button id="math-redo" class="canvas-button" type="button" aria-label="Rehacer" title="Rehacer">↷</button>
+              <button id="math-eraser" class="canvas-button" type="button" aria-pressed="false">Borrador</button>
+              <label class="math-color-label" for="math-pen-color">Lápiz</label>
+              <input id="math-pen-color" type="color" value="#e7ddf6" aria-label="Color del lápiz" />
+              <label class="math-color-label" for="brush-size">Grosor</label>
+              <select id="brush-size" aria-label="Grosor del lápiz"><option value="2">Fino</option><option value="4" selected>Medio</option><option value="8">Grueso</option></select>
+              <button id="clear-canvas" class="canvas-button" type="button">Borrar todo</button>
+              <label class="math-expression-label" for="math-expression">Expresión</label>
+              <input id="math-expression" class="math-expression-input" type="text" placeholder="Escribe aquí si el reconocimiento no está disponible" autocomplete="off" />
+              <button id="math-solve" class="canvas-button canvas-download" type="button">Resolver</button>
             </div>
-            <p class="canvas-hint">Trazo luminoso · ratón, lápiz o pantalla táctil <span>Desbloquea para dibujar · presiona P dos veces para borrar</span></p>
+            <div class="math-status-row">
+              <span id="math-status" role="status">Escribe en la pizarra o introduce una operación con el teclado.</span>
+              <span id="math-answer" aria-live="polite"></span>
+            </div>
+            <div id="canvas-sheet" class="canvas-sheet math-sheet">
+              <canvas id="canvas-ink" aria-label="Escribe una operación matemática aquí con el ratón, lápiz o dedo"></canvas>
+            </div>
+            <section id="math-graph-panel" class="math-graph-panel" hidden aria-label="Gráfico de la expresión">
+              <div class="math-graph-heading"><strong>Gráfico</strong><span>Desplaza con el ratón · usa la rueda para acercar</span></div>
+              <canvas id="math-graph" aria-label="Gráfico interactivo de la función"></canvas>
+              <p id="math-graph-coordinates" aria-live="polite">Escribe una función o ecuación con x para graficar.</p>
+            </section>
+            <p class="canvas-hint math-hint">Pizarra local: el reconocimiento de escritura por IA requiere un backend seguro; nunca se envía tu dibujo con una clave expuesta.</p>
           </section>
           <div id="windows-area" class="windows-area">
           <article id="window-health" class="widget-window" data-window="health">
             <header class="window-header" data-drag-handle>
-              <div class="window-title"><span class="window-icon health-icon"><img src="SALUD.jpg" alt="" /></span><div><h2>Salud</h2><p>Tu bienestar primero</p></div></div>
+              <div class="window-title"><span class="window-icon health-icon" aria-hidden="true">Sa</span><div><h2>Salud</h2><p>Tu bienestar primero</p></div></div>
               <div class="window-controls">
                 <button class="window-control" data-minimize="health" aria-label="Minimizar Salud" title="Minimizar">−</button>
                 <button class="window-control" data-maximize="health" aria-label="Maximizar Salud" title="Maximizar">□</button>
@@ -166,13 +165,14 @@
               </div>
               </header>
               <div class="window-body health-body">
+                <iframe id="health-model-frame" class="health-model-frame" src="Modelo%20corporal%20ajustable.html" title="Modelo corporal 3D ajustable y datos de salud" loading="eager"></iframe>
                 <div class="health-summary"><div class="health-ring"><span>✦</span></div><div><span class="mini-label">TU RECORDATORIO</span><h3 id="health-reminder">Un momento para respirar</h3><p id="health-detail">Pausar también es avanzar.</p></div></div>
                 <div class="widget-bottom-line"><span>¿Cómo te sientes hoy?</span><div class="mood-options"><button data-mood="Con energía" aria-label="Con energía">☀</button><button data-mood="En calma" aria-label="En calma">☁</button><button data-mood="Necesito una pausa" aria-label="Necesito una pausa">♡</button></div></div>
               </div>
             </article>
             <article id="window-study" class="widget-window" data-window="study">
               <header class="window-header" data-drag-handle>
-                <div class="window-title"><span class="window-icon study-icon"><img src="ESTUDIO.jpg" alt="" /></span><div><h2>Estudio</h2><p>Pequeños pasos, grandes ideas</p></div></div>
+                <div class="window-title"><span class="window-icon study-icon" aria-hidden="true">Es</span><div><h2>Estudio</h2><p>Pequeños pasos, grandes ideas</p></div></div>
                 <div class="window-controls">
                   <button class="window-control" data-minimize="study" aria-label="Minimizar Estudio" title="Minimizar">−</button>
                   <button class="window-control" data-maximize="study" aria-label="Maximizar Estudio" title="Maximizar">□</button>
@@ -188,7 +188,7 @@
             </article>
             <article id="window-finance" class="widget-window" data-window="finance">
               <header class="window-header" data-drag-handle>
-                <div class="window-title"><span class="window-icon finance-icon"><img src="ECONOMIA.jpg" alt="" /></span><div><h2>Economía</h2><p>Claridad para tus decisiones</p></div></div>
+                <div class="window-title"><span class="window-icon finance-icon" aria-hidden="true">Ec</span><div><h2>Economía</h2><p>Claridad para tus decisiones</p></div></div>
                 <div class="window-controls">
                   <button class="window-control" data-minimize="finance" aria-label="Minimizar Economía" title="Minimizar">−</button>
                   <button class="window-control" data-maximize="finance" aria-label="Maximizar Economía" title="Maximizar">□</button>
@@ -203,7 +203,7 @@
             </article>
             <article id="window-fun" class="widget-window" data-window="fun">
               <header class="window-header" data-drag-handle>
-                <div class="window-title"><span class="window-icon fun-icon"><img src="ENTRETENIMIENTO.jpg" alt="" /></span><div><h2>Entretenimiento</h2><p>También mereces disfrutar</p></div></div>
+                <div class="window-title"><span class="window-icon fun-icon" aria-hidden="true">En</span><div><h2>Entretenimiento</h2><p>También mereces disfrutar</p></div></div>
                 <div class="window-controls">
                   <button class="window-control" data-minimize="fun" aria-label="Minimizar Entretenimiento" title="Minimizar">−</button>
                   <button class="window-control" data-maximize="fun" aria-label="Maximizar Entretenimiento" title="Maximizar">□</button>
@@ -257,15 +257,6 @@
                   <input id="settings-confirm-password" type="password" autocomplete="new-password" minlength="8" />
                 </div>
               </section>
-              <section class="settings-section canvas-settings" aria-labelledby="settings-canvas-title">
-                <div><h3 id="settings-canvas-title">Foto del lienzo</h3><p>Esta imagen será el fondo de tu escritorio y lienzo.</p></div>
-                <div class="canvas-image-preview" id="canvas-image-preview" role="img" aria-label="Vista previa de la foto del lienzo"></div>
-                <div class="canvas-image-actions">
-                  <input id="settings-canvas-file" class="settings-file-input" type="file" accept="image/*" />
-                  <label class="settings-file-button" for="settings-canvas-file">Elegir imagen</label>
-                  <button id="reset-canvas-image" class="text-button" type="button">Restaurar imagen Kagami</button>
-                </div>
-              </section>
               <p id="settings-error" class="form-error" role="alert"></p>
               <footer class="settings-actions">
                 <button id="cancel-settings" class="button button-quiet" type="button">Cancelar</button>
@@ -278,6 +269,6 @@
       </section>
     </main>
     <script src="tracking.js"></script>
-    <script src="app.js"></script>
+    <script src="app.js?v=12"></script>
   </body>
 </html>

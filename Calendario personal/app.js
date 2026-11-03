@@ -1,37 +1,35 @@
 const STORAGE_KEYS = {
   user: "kagami-user",
   account: "kagami-account-v1",
+  accounts: "kagami-accounts-v1",
   profile: "kagami-profile",
   onboardingDraft: "kagami-onboarding-draft-v1",
   tracking: "kagami-tracking-v1",
+  bodyModel: "kagami-body-model-v1",
   layout: "kagami-layout-v2",
   theme: "kagami-theme",
-  canvasColor: "kagami-canvas-color",
   hiddenPanels: "kagami-hidden-panels-v2",
   minimizedPanels: "kagami-minimized-panels",
   sidebarHidden: "kagami-sidebar-hidden",
+  mathHeaderHidden: "kagami-math-header-hidden",
   settings: "kagami-settings-v1",
 };
+const USER_SCOPED_STORAGE_KEYS = new Set([
+  STORAGE_KEYS.profile,
+  STORAGE_KEYS.onboardingDraft,
+  STORAGE_KEYS.tracking,
+  STORAGE_KEYS.bodyModel,
+  STORAGE_KEYS.layout,
+  STORAGE_KEYS.theme,
+  STORAGE_KEYS.hiddenPanels,
+  STORAGE_KEYS.minimizedPanels,
+  STORAGE_KEYS.sidebarHidden,
+  STORAGE_KEYS.mathHeaderHidden,
+  STORAGE_KEYS.settings,
+]);
 
 const PANEL_IDS = ["health", "study", "finance", "fun"];
 const WINDOW_RESIZE_DIRECTIONS = ["n", "ne", "e", "se", "s", "sw", "w", "nw"];
-const CANVAS_COLORS = {
-  moonlight: {
-    halo: "rgba(255, 230, 160, 0.26)",
-    glow: "rgba(255, 240, 168, 0.34)",
-    core: "rgba(255, 244, 196, 0.88)",
-  },
-  lavender: {
-    halo: "rgba(183, 162, 255, 0.26)",
-    glow: "rgba(193, 165, 255, 0.34)",
-    core: "rgba(232, 218, 255, 0.9)",
-  },
-  starlight: {
-    halo: "rgba(105, 202, 255, 0.24)",
-    glow: "rgba(135, 220, 255, 0.32)",
-    core: "rgba(215, 245, 255, 0.92)",
-  },
-};
 const screens = {
   intro: document.querySelector("#intro"),
   auth: document.querySelector("#auth"),
@@ -78,14 +76,23 @@ let editingProfile = false;
 let authMode = "login";
 let toastTimer;
 let windowZIndex = 10;
-let lastCanvasClearKey = 0;
 let canvasContext;
-let canvasIsDrawing = false;
-let selectedCanvasColor = "moonlight";
+let mathStrokes = [];
+let undoneMathStrokes = [];
+let activeMathStroke = null;
+let mathAnswerText = "";
+let mathAnswerProgress = 0;
+let mathGraphScale = 1;
+let mathGraphOffset = { x: 0, y: 0 };
+let mathGraphPointer = null;
+let mathRecognitionTimer;
+let lastMathStrokeEndedAt = 0;
+let activeMathSymbolId = "";
 
 function getStored(key, fallback = null) {
   try {
-    const value = localStorage.getItem(key);
+    const scopedKey = getScopedStorageKey(key);
+    const value = localStorage.getItem(scopedKey);
     return value ? JSON.parse(value) : fallback;
   } catch (error) {
     console.error(`No se pudo leer el dato local "${key}".`, error);
@@ -95,7 +102,8 @@ function getStored(key, fallback = null) {
 
 function saveStored(key, value) {
   try {
-    localStorage.setItem(key, JSON.stringify(value));
+    const scopedKey = getScopedStorageKey(key);
+    localStorage.setItem(scopedKey, JSON.stringify(value));
     return true;
   } catch (error) {
     console.error(`No se pudo guardar el dato local "${key}".`, error);
@@ -106,13 +114,57 @@ function saveStored(key, value) {
 
 function removeStored(key) {
   try {
-    localStorage.removeItem(key);
+    const scopedKey = getScopedStorageKey(key);
+    localStorage.removeItem(scopedKey);
     return true;
   } catch (error) {
     console.error(`No se pudo borrar el dato local "${key}".`, error);
     showToast("No se pudo borrar el progreso guardado en este dispositivo.");
     return false;
   }
+}
+
+function getScopedStorageKey(key) {
+  if (!USER_SCOPED_STORAGE_KEYS.has(key)) return key;
+  const session = getStored(STORAGE_KEYS.user);
+  return session?.id ? `${key}:${encodeURIComponent(session.id)}` : key;
+}
+
+function createLocalAccountId() {
+  return globalThis.crypto?.randomUUID?.() || `kagami-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function migrateLegacyUserData(account) {
+  // Solo los datos antiguos con el mismo usuario se trasladan a su espacio aislado.
+  const legacyAccount = getStored(STORAGE_KEYS.account);
+  if (!legacyAccount || legacyAccount.name.trim().toLocaleLowerCase() !== account.name.trim().toLocaleLowerCase()) return true;
+  try {
+    USER_SCOPED_STORAGE_KEYS.forEach((key) => {
+      const scopedKey = `${key}:${encodeURIComponent(account.id)}`;
+      const legacyValue = localStorage.getItem(key);
+      if (legacyValue !== null && localStorage.getItem(scopedKey) === null) {
+        localStorage.setItem(scopedKey, legacyValue);
+        localStorage.removeItem(key);
+      }
+    });
+    return true;
+  } catch (error) {
+    console.error("No se pudieron transferir los datos del usuario local.", error);
+    showToast("No se pudieron migrar los datos guardados de esta cuenta.");
+    return false;
+  }
+}
+
+function getLocalAccounts() {
+  const accounts = getStored(STORAGE_KEYS.accounts);
+  if (Array.isArray(accounts)) return accounts.filter((account) => account && typeof account.name === "string");
+  const legacyAccount = getStored(STORAGE_KEYS.account);
+  return legacyAccount && typeof legacyAccount.name === "string" ? [legacyAccount] : [];
+}
+
+function findLocalAccount(accounts, username) {
+  const normalizedName = username.trim().toLocaleLowerCase();
+  return accounts.find((account) => account.name.trim().toLocaleLowerCase() === normalizedName);
 }
 
 function showScreen(name) {
@@ -180,113 +232,103 @@ function startAuth() {
 document.querySelector("#start-button").addEventListener("click", () => {
   const button = document.querySelector("#start-button");
   button.classList.add("launching");
-  document.querySelector(".planet-large").classList.add("launch-planet");
   window.setTimeout(startAuth, 700);
 });
 
 function configureAuthMode(mode) {
   authMode = mode;
   const form = document.querySelector("#auth-form");
-  const passwordGroup = document.querySelector("#password-group");
-  const otpGroup = document.querySelector("#otp-group");
   const title = document.querySelector("#auth-title");
   const subtitle = document.querySelector("#auth-subtitle");
   const submit = document.querySelector("#auth-submit");
   const create = document.querySelector("#create-account");
-  const forgot = document.querySelector("#forgot-password");
+  const password = document.querySelector("#password");
   document.querySelector("#auth-error").textContent = "";
-  passwordGroup.classList.toggle("hidden", mode === "forgot");
-  otpGroup.classList.toggle("hidden", mode === "forgot");
-  document.querySelector("#password").required = mode !== "forgot";
-  document.querySelector("#otp").required = mode !== "forgot";
+  password.autocomplete = mode === "signup" ? "new-password" : "current-password";
+  password.minLength = mode === "signup" ? 8 : 4;
   if (mode === "signup") {
     title.textContent = "Empecemos por ti.";
     subtitle.textContent = "Crea tu acceso a Kagami.";
     submit.innerHTML = "Crear mi cuenta <span>→</span>";
     create.textContent = "Ya tengo una cuenta";
-    forgot.textContent = "¿Necesitas ayuda?";
-  } else if (mode === "forgot") {
-    title.textContent = "Recuperemos tu acceso.";
-    subtitle.textContent = "Te guiaremos para volver a tu espacio.";
-    submit.innerHTML = "Continuar <span>→</span>";
-    create.textContent = "Volver al inicio";
-    forgot.textContent = "Crear una cuenta";
   } else {
     title.textContent = "Qué gusto tenerte aquí.";
     subtitle.textContent = "Ingresa a tu espacio personal.";
     submit.innerHTML = "Entrar a mi espacio <span>→</span>";
     create.textContent = "Crear una cuenta";
-    forgot.textContent = "Olvidé mi contraseña";
   }
   form.dataset.mode = mode;
 }
 
+configureAuthMode("login");
+
 document.querySelector("#create-account").addEventListener("click", () => {
   configureAuthMode(authMode === "signup" ? "login" : "signup");
-});
-document.querySelector("#forgot-password").addEventListener("click", () => {
-  configureAuthMode(authMode === "forgot" ? "signup" : "forgot");
 });
 
 document.querySelector("#auth-form").addEventListener("submit", async (event) => {
   event.preventDefault();
   const username = document.querySelector("#username").value.trim();
   const password = document.querySelector("#password").value;
-  const otp = document.querySelector("#otp").value.trim();
   const error = document.querySelector("#auth-error");
-  if (authMode === "forgot") {
-    error.textContent = "";
-    showToast(`Si existe una cuenta para ${username}, recibirás instrucciones de recuperación.`);
-    configureAuthMode("login");
-    return;
-  }
-  if (otp !== "123456") {
-    error.textContent = "Código de verificación incorrecto. Para esta demo, usa 123456.";
-    return;
-  }
-  if (!username || password.length < 4) {
+  if (!username || !password) {
     error.textContent = "Revisa tu usuario y contraseña para continuar.";
     return;
   }
-  if (authMode === "signup" && password.length < 8) {
-    error.textContent = "Para crear una cuenta, usa una contraseña de al menos 8 caracteres.";
+  if (!password || (authMode === "signup" && password.length < 8)) {
+    error.textContent = "La contraseña debe tener al menos 8 caracteres.";
     return;
   }
-  const savedUser = getStored(STORAGE_KEYS.account) || getStored(STORAGE_KEYS.user);
-  if (authMode === "login" && savedUser && savedUser.name !== username) {
-    error.textContent = "No hay una cuenta local con ese usuario.";
+  const accounts = getLocalAccounts();
+  let account = findLocalAccount(accounts, username);
+  if (authMode === "signup" && account?.credential) {
+    error.textContent = "Ya existe una cuenta con ese usuario. Inicia sesión.";
     return;
   }
-  let credential;
+  if (authMode === "login" && !account) {
+    configureAuthMode("signup");
+    error.textContent = "No existe una cuenta con ese usuario. Crea una cuenta para continuar.";
+    return;
+  }
+  if (authMode === "login" && !account.credential) {
+    error.textContent = "Esta cuenta necesita registrarse para configurar una contraseña.";
+    return;
+  }
   try {
-    if (authMode === "login" && savedUser?.name === username && savedUser.credential) {
-      if (!await verifyPassword(password, savedUser.credential)) {
-        error.textContent = "La contraseña no es correcta.";
-        return;
-      }
-      credential = savedUser.credential;
-    } else {
-      credential = await createPasswordCredential(password);
+    if (authMode === "signup") {
+      const previousAccount = account;
+      account = {
+        ...(previousAccount || {}),
+        name: username,
+        created: previousAccount?.created || Date.now(),
+        credential: await createPasswordCredential(password),
+      };
+      const existingIndex = previousAccount ? accounts.indexOf(previousAccount) : -1;
+      if (existingIndex >= 0) accounts[existingIndex] = account;
+      else accounts.push(account);
+    } else if (!await verifyPassword(password, account.credential)) {
+      error.textContent = "La contraseña no es correcta.";
+      return;
     }
   } catch (credentialError) {
     console.error("No se pudo verificar o proteger la contraseña local.", credentialError);
     error.textContent = "No se pudo proteger la contraseña en este dispositivo. Inténtalo de nuevo.";
     return;
   }
-  const account = {
-    ...(savedUser?.name === username ? savedUser : {}),
-    name: username,
-    created: savedUser?.name === username ? savedUser.created : Date.now(),
-    credential,
-  };
+  account.id = account.id || createLocalAccountId();
+  const accountIndex = accounts.findIndex((entry) => entry === account || entry.name.trim().toLocaleLowerCase() === account.name.trim().toLocaleLowerCase());
+  if (accountIndex >= 0) accounts[accountIndex] = account;
+  if (!saveStored(STORAGE_KEYS.accounts, accounts)) {
+    error.textContent = "No se pudo guardar la cuenta en este dispositivo.";
+    return;
+  }
+  if (!migrateLegacyUserData(account)) return;
   if (!saveStored(STORAGE_KEYS.account, account)) {
     error.textContent = "No se pudo guardar la cuenta en este dispositivo.";
     return;
   }
-  const sessionUser = { name: account.name, created: account.created };
+  const sessionUser = { id: account.id, name: account.name, created: account.created };
   if (!saveStored(STORAGE_KEYS.user, sessionUser)) {
-    if (savedUser) saveStored(STORAGE_KEYS.account, savedUser);
-    else removeStored(STORAGE_KEYS.account);
     error.textContent = "No se pudo iniciar la sesión en este dispositivo.";
     return;
   }
@@ -500,20 +542,37 @@ document.querySelector("#question-next").addEventListener("click", () => {
 
 function enterDashboard(user, profile) {
   showScreen("dashboard");
-  setDrawingMode(false);
   renderProfileButton(user);
-  applyWorkspaceImage();
+  setMathHeaderHidden(getStored(STORAGE_KEYS.mathHeaderHidden, false));
   document.querySelector("#today-label").textContent = new Intl.DateTimeFormat("es", { weekday: "long", day: "numeric", month: "long" }).format(new Date());
   personalizeDashboard(profile);
   applyTheme(getStored(STORAGE_KEYS.theme, "dark"));
   applyLayout();
+  const savedPanelVisibility = getStored(STORAGE_KEYS.hiddenPanels, null);
   applyHiddenPanels();
+  if (savedPanelVisibility === null) openWindow("health");
+  syncHealthModel();
   setSidebarHidden(getStored(STORAGE_KEYS.sidebarHidden, false));
   requestAnimationFrame(resizeInkCanvas);
 }
 
+function syncHealthModel() {
+  const frame = document.querySelector("#health-model-frame");
+  if (!frame.contentWindow) return;
+  frame.contentWindow.postMessage({
+    modelo3d: getStored(STORAGE_KEYS.bodyModel, {
+      sex: "female",
+      altura: 163,
+      peso: 62,
+      pulso: 70,
+      color: "#c9a27e",
+    }),
+  }, "*");
+}
+
 function renderProfileButton(user) {
   const button = document.querySelector("#profile-button");
+  document.querySelector("#workspace-user-name").textContent = user.name || "usuario";
   button.replaceChildren();
   button.setAttribute("aria-label", `Abrir perfil de ${user.name || "usuario"}`);
   if (typeof user.profileImage === "string" && user.profileImage.startsWith("data:image/")) {
@@ -524,15 +583,6 @@ function renderProfileButton(user) {
   } else {
     button.textContent = (user.name || "U").slice(0, 1).toUpperCase();
   }
-}
-
-function applyWorkspaceImage() {
-  const settings = getStored(STORAGE_KEYS.settings, {});
-  const image = typeof settings?.canvasImage === "string" && settings.canvasImage.startsWith("data:image/")
-    ? settings.canvasImage
-    : "Jupiter.png";
-  screens.dashboard.style.setProperty("--workspace-image", `url("${image}")`);
-  document.querySelector("#canvas-image-preview").style.backgroundImage = `url("${image}")`;
 }
 
 function personalizeDashboard(profile) {
@@ -641,7 +691,9 @@ function positionWindow(windowEl, slot) {
 
   if (window.matchMedia("(max-width: 620px)").matches) {
     const windowWidth = Math.max(0, width - 12);
-    const windowHeight = Math.min(height - 16, Math.max(220, Math.min(430, height * 0.72)));
+    const windowHeight = windowEl.dataset.window === "health"
+      ? Math.max(220, height - 16)
+      : Math.min(height - 16, Math.max(220, Math.min(430, height * 0.72)));
     windowEl.style.left = `${6 + slot * 7}px`;
     windowEl.style.top = `${8 + slot * 24}px`;
     windowEl.style.width = `${windowWidth}px`;
@@ -652,8 +704,10 @@ function positionWindow(windowEl, slot) {
   const gap = 12;
   const columns = width >= 600 ? 2 : 1;
   const rows = 2;
-  const windowWidth = Math.min(640, (width - gap * (columns - 1)) / columns);
-  const windowHeight = Math.min(350, (height - gap * (rows - 1)) / rows);
+  const windowWidth = Math.min(windowEl.dataset.window === "health" ? 620 : 640, (width - gap * (columns - 1)) / columns);
+  const windowHeight = windowEl.dataset.window === "health"
+    ? Math.max(280, height - 16)
+    : Math.min(350, (height - gap * (rows - 1)) / rows);
   const slotInPage = slot % (columns * rows);
   windowEl.style.left = `${(slotInPage % columns) * (windowWidth + gap)}px`;
   windowEl.style.top = `${Math.floor(slotInPage / columns) * (windowHeight + gap)}px`;
@@ -744,6 +798,16 @@ function fitWindowsToArea() {
   const savedLayouts = getStored(STORAGE_KEYS.layout, {});
   visibleWindows.forEach((windowEl, index) => {
     if (mobile) {
+      const saved = savedLayouts[windowEl.dataset.window];
+      if (windowEl.dataset.window === "health" && saved) {
+        const width = Math.min(areaWidth, Math.max(Math.min(220, areaWidth), saved.width));
+        const height = Math.max(220, area.clientHeight - 16);
+        windowEl.style.left = `${Math.max(0, Math.min(areaWidth - width, saved.left))}px`;
+        windowEl.style.top = "8px";
+        windowEl.style.width = `${width}px`;
+        windowEl.style.height = `${height}px`;
+        return;
+      }
       positionWindow(windowEl, index);
       return;
     }
@@ -767,34 +831,87 @@ function resizeInkCanvas() {
   const rect = canvas.getBoundingClientRect();
   if (!rect.width || !rect.height) return;
   const ratio = window.devicePixelRatio || 1;
-  if (canvas.width === Math.round(rect.width * ratio) && canvas.height === Math.round(rect.height * ratio)) return;
-  const previous = document.createElement("canvas");
-  previous.width = canvas.width;
-  previous.height = canvas.height;
-  if (canvas.width && canvas.height) previous.getContext("2d").drawImage(canvas, 0, 0);
-  canvas.width = Math.round(rect.width * ratio);
-  canvas.height = Math.round(rect.height * ratio);
+  const width = Math.round(rect.width * ratio);
+  const height = Math.round(rect.height * ratio);
+  if (canvas.width === width && canvas.height === height) return;
+  canvas.width = width;
+  canvas.height = height;
   canvasContext = canvas.getContext("2d");
   canvasContext.setTransform(ratio, 0, 0, ratio, 0, 0);
-  if (previous.width && previous.height) {
-    canvasContext.drawImage(previous, 0, 0, previous.width, previous.height, 0, 0, rect.width, rect.height);
-  }
+  renderMathCanvas();
 }
 
 function clearInkCanvas() {
-  const canvas = document.querySelector("#canvas-ink");
-  if (!canvasContext) return;
-  canvasContext.clearRect(0, 0, canvas.width, canvas.height);
-  showToast("Lienzo limpio. Listo para una nueva idea.");
+  mathStrokes = [];
+  undoneMathStrokes = [];
+  activeMathStroke = null;
+  mathAnswerText = "";
+  document.querySelector("#math-answer").textContent = "";
+  document.querySelector("#math-status").textContent = "Pizarra limpia. Escribe una nueva operación.";
+  renderMathCanvas();
+  updateMathHistoryControls();
 }
 
-function setDrawingMode(enabled) {
-  canvasIsDrawing = enabled;
-  document.querySelector("#canvas-sheet").classList.toggle("is-drawing", enabled);
-  const button = document.querySelector("#draw-toggle");
-  button.setAttribute("aria-pressed", String(enabled));
-  button.innerHTML = enabled ? "<span>✎</span> Bloquear dibujo" : "<span>✎</span> Desbloquear dibujo";
-  button.setAttribute("aria-label", enabled ? "Bloquear dibujo en el lienzo" : "Desbloquear dibujo en el lienzo");
+function updateMathHistoryControls() {
+  document.querySelector("#math-undo").disabled = mathStrokes.length === 0;
+  document.querySelector("#math-redo").disabled = undoneMathStrokes.length === 0;
+}
+
+function drawMathStroke(context, stroke) {
+  if (!stroke.points.length) return;
+  context.save();
+  context.globalCompositeOperation = stroke.erase ? "destination-out" : "source-over";
+  context.strokeStyle = stroke.color;
+  context.fillStyle = stroke.color;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  const first = stroke.points[0];
+  if (stroke.points.length === 1) {
+    context.globalAlpha = Math.max(0.15, first.pressure || 0.5);
+    context.beginPath();
+    context.arc(first.x, first.y, stroke.width * Math.max(0.35, first.pressure || 0.5) / 2, 0, Math.PI * 2);
+    context.fill();
+    context.restore();
+    return;
+  }
+  for (let index = 1; index < stroke.points.length; index += 1) {
+    const previous = stroke.points[index - 1];
+    const current = stroke.points[index];
+    const midpointX = (previous.x + current.x) / 2;
+    const midpointY = (previous.y + current.y) / 2;
+    context.beginPath();
+    context.moveTo(index === 1 ? previous.x : (stroke.points[index - 2].x + previous.x) / 2, index === 1 ? previous.y : (stroke.points[index - 2].y + previous.y) / 2);
+    context.quadraticCurveTo(previous.x, previous.y, midpointX, midpointY);
+    context.lineWidth = stroke.width * Math.max(0.35, (previous.pressure + current.pressure) / 2);
+    context.stroke();
+  }
+  const last = stroke.points[stroke.points.length - 1];
+  context.beginPath();
+  context.arc(last.x, last.y, stroke.width * Math.max(0.35, last.pressure) / 2, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function renderMathCanvas() {
+  const canvas = document.querySelector("#canvas-ink");
+  if (!canvasContext || !canvas.width || !canvas.height) return;
+  const ratio = canvas.width / Math.max(1, canvas.clientWidth);
+  canvasContext.save();
+  canvasContext.setTransform(ratio, 0, 0, ratio, 0, 0);
+  canvasContext.clearRect(0, 0, canvas.clientWidth, canvas.clientHeight);
+  mathStrokes.forEach((stroke) => drawMathStroke(canvasContext, stroke));
+  if (activeMathStroke) drawMathStroke(canvasContext, activeMathStroke);
+  if (mathAnswerText && mathAnswerProgress > 0) {
+    const answer = `= ${mathAnswerText}`;
+    const visibleAnswer = answer.slice(0, Math.ceil(answer.length * mathAnswerProgress));
+    canvasContext.save();
+    canvasContext.globalCompositeOperation = "source-over";
+    canvasContext.fillStyle = document.body.classList.contains("math-light") ? "#20202b" : "#c5a0ff";
+    canvasContext.font = '32px "Caveat", cursive';
+    canvasContext.fillText(visibleAnswer, 28, Math.max(52, canvas.clientHeight - 28));
+    canvasContext.restore();
+  }
+  canvasContext.restore();
 }
 
 function storeWindowLayout(windowEl) {
@@ -854,7 +971,7 @@ document.querySelectorAll("[data-resize]").forEach((handle) => {
     };
     const direction = handle.dataset.resize;
     const areaWidth = windowsAreaWidth(area);
-    const minWidth = Math.min(280, areaWidth);
+    const minWidth = Math.min(windowEl.dataset.window === "health" ? 220 : 280, areaWidth);
     const minHeight = Math.min(190, area.clientHeight);
     handle.setPointerCapture(event.pointerId);
 
@@ -945,6 +1062,24 @@ document.querySelectorAll(".widget-window").forEach((windowEl) => {
   windowEl.addEventListener("pointerdown", () => focusWindow(windowEl));
 });
 
+const healthModelFrame = document.querySelector("#health-model-frame");
+healthModelFrame.addEventListener("load", syncHealthModel);
+window.addEventListener("message", (event) => {
+  if (event.source !== healthModelFrame.contentWindow || !event.data || event.data.type !== "kagami:model-change") return;
+  const model = event.data.modelo3d;
+  const minimumWeight = model && Number.isFinite(model.altura) ? Math.ceil(15 * (model.altura / 100) ** 2) : NaN;
+  const maximumWeight = model && Number.isFinite(model.altura) ? Math.floor(42 * (model.altura / 100) ** 2) : NaN;
+  if (
+    !model ||
+    !["female", "male"].includes(model.sex) ||
+    !Number.isFinite(model.altura) || model.altura < 140 || model.altura > 200 ||
+    !Number.isFinite(model.peso) || model.peso < minimumWeight || model.peso > maximumWeight ||
+    !Number.isFinite(model.pulso) || model.pulso < 40 || model.pulso > 180 ||
+    typeof model.color !== "string" || !/^#[\da-f]{6}$/i.test(model.color)
+  ) return;
+  saveStored(STORAGE_KEYS.bodyModel, model);
+});
+
 document.querySelectorAll("[data-close]").forEach((button) => {
   button.addEventListener("click", () => {
     closeWindow(button.dataset.close);
@@ -989,123 +1124,431 @@ document.querySelector("#sidebar-toggle").addEventListener("click", () => {
 document.querySelector("#logout-button").addEventListener("click", () => {
   if (!removeStored(STORAGE_KEYS.user)) return;
   document.querySelector("#password").value = "";
-  document.querySelector("#otp").value = "";
   document.querySelector("#auth-error").textContent = "";
   document.querySelector("#start-button").classList.remove("launching");
-  document.querySelector(".planet-large").classList.remove("launch-planet");
   configureAuthMode("login");
-  setDrawingMode(false);
   showScreen("intro");
 });
-document.querySelector("#draw-toggle").addEventListener("click", () => setDrawingMode(!canvasIsDrawing));
-document.querySelector("#canvas-tools-toggle").addEventListener("click", (event) => {
-  const button = event.currentTarget;
-  const actions = document.querySelector("#canvas-actions");
-  const expanded = button.getAttribute("aria-expanded") !== "true";
-  actions.hidden = !expanded;
-  button.setAttribute("aria-expanded", String(expanded));
-  button.setAttribute("aria-label", expanded ? "Ocultar herramientas de dibujo" : "Mostrar herramientas de dibujo");
-  button.title = expanded ? "Ocultar herramientas de dibujo" : "Mostrar herramientas de dibujo";
-});
 document.querySelector("#clear-canvas").addEventListener("click", clearInkCanvas);
-function selectCanvasColor(color, persist = true) {
-  if (!CANVAS_COLORS[color]) return;
-  selectedCanvasColor = color;
-  document.querySelectorAll("[data-ink-color]").forEach((button) => {
-    const selected = button.dataset.inkColor === color;
-    button.classList.toggle("selected", selected);
-    button.setAttribute("aria-pressed", String(selected));
-  });
-  if (persist) saveStored(STORAGE_KEYS.canvasColor, color);
-}
-document.querySelectorAll("[data-ink-color]").forEach((button) => {
-  button.addEventListener("click", () => selectCanvasColor(button.dataset.inkColor));
-});
-const savedCanvasColor = getStored(STORAGE_KEYS.canvasColor, "moonlight");
-selectCanvasColor(CANVAS_COLORS[savedCanvasColor] ? savedCanvasColor : "moonlight", false);
 
-function strokeSkyTear() {
-  const brushSize = Number(document.querySelector("#brush-size").value);
-  const color = CANVAS_COLORS[selectedCanvasColor];
-  canvasContext.save();
-  canvasContext.lineCap = "round";
-  canvasContext.lineJoin = "round";
-  canvasContext.strokeStyle = color.halo;
-  canvasContext.lineWidth = brushSize * 2;
-  canvasContext.shadowColor = color.glow;
-  canvasContext.shadowBlur = brushSize * 2;
-  canvasContext.stroke();
-  canvasContext.strokeStyle = color.core;
-  canvasContext.lineWidth = Math.max(1, brushSize * 0.5);
-  canvasContext.shadowColor = color.glow;
-  canvasContext.shadowBlur = brushSize;
-  canvasContext.stroke();
-  canvasContext.restore();
-}
-document.querySelector("#canvas-sheet").addEventListener("pointerdown", (event) => {
-  if (!canvasIsDrawing || event.target !== document.querySelector("#canvas-ink")) return;
-  const canvas = event.currentTarget.querySelector("#canvas-ink");
+function getMathPoint(event, canvas) {
   const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  canvasContext.beginPath();
-  canvasContext.moveTo(x, y);
-  canvasContext.lineTo(x + 0.01, y + 0.01);
-  strokeSkyTear();
+  return {
+    x: event.clientX - rect.left,
+    y: event.clientY - rect.top,
+    pressure: event.pressure > 0 ? event.pressure : 0.5,
+    time: Date.now(),
+  };
+}
+
+function finalizeMathStroke() {
+  if (!activeMathStroke) return;
+  activeMathStroke.pointerId = null;
+  mathStrokes.push(activeMathStroke);
+  lastMathStrokeEndedAt = Date.now();
+  activeMathStroke = null;
+  undoneMathStrokes = [];
+  renderMathCanvas();
+  updateMathHistoryControls();
+  window.clearTimeout(mathRecognitionTimer);
+  mathRecognitionTimer = window.setTimeout(() => {
+    document.querySelector("#math-status").textContent =
+      "No hay un servicio seguro de reconocimiento de escritura configurado. Escribe la expresión arriba para resolverla.";
+  }, 1000);
+}
+
+function stopMathPointer(event) {
+  if (!activeMathStroke || activeMathStroke.pointerId !== event.pointerId) return;
+  activeMathStroke.pointerId = null;
+  finalizeMathStroke();
+}
+
+document.querySelector("#canvas-ink").addEventListener("pointerdown", (event) => {
+  if (event.button !== undefined && event.button !== 0) return;
+  event.preventDefault();
+  const canvas = event.currentTarget;
+  const point = getMathPoint(event, canvas);
+  if (point.time - lastMathStrokeEndedAt > 1000) activeMathSymbolId = createLocalAccountId();
+  activeMathStroke = {
+    points: [point],
+    color: document.querySelector("#math-eraser").getAttribute("aria-pressed") === "true"
+      ? "#000"
+      : document.querySelector("#math-pen-color").value,
+    width: Number(document.querySelector("#brush-size").value),
+    erase: document.querySelector("#math-eraser").getAttribute("aria-pressed") === "true",
+    pointerId: event.pointerId,
+    timestamp: point.time,
+    symbolId: activeMathSymbolId,
+  };
   canvas.setPointerCapture(event.pointerId);
-  canvas.dataset.drawingPointer = String(event.pointerId);
-  canvas.dataset.lastX = String(x);
-  canvas.dataset.lastY = String(y);
+  renderMathCanvas();
 });
 document.querySelector("#canvas-ink").addEventListener("pointermove", (event) => {
-  const canvas = event.currentTarget;
-  if (!canvasIsDrawing || canvas.dataset.drawingPointer !== String(event.pointerId)) return;
-  const rect = canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-  canvasContext.beginPath();
-  canvasContext.moveTo(Number(canvas.dataset.lastX), Number(canvas.dataset.lastY));
-  canvasContext.lineTo(x, y);
-  strokeSkyTear();
-  canvas.dataset.lastX = String(x);
-  canvas.dataset.lastY = String(y);
+  if (!activeMathStroke || activeMathStroke.pointerId !== event.pointerId) return;
+  event.preventDefault();
+  activeMathStroke.points.push(getMathPoint(event, event.currentTarget));
+  renderMathCanvas();
 });
-function stopCanvasStroke(event) {
-  const canvas = document.querySelector("#canvas-ink");
-  if (canvas.dataset.drawingPointer !== String(event.pointerId)) return;
-  delete canvas.dataset.drawingPointer;
-  delete canvas.dataset.lastX;
-  delete canvas.dataset.lastY;
-  canvasContext.closePath();
+document.querySelector("#canvas-ink").addEventListener("pointerup", stopMathPointer);
+document.querySelector("#canvas-ink").addEventListener("pointercancel", stopMathPointer);
+document.querySelector("#canvas-ink").addEventListener("lostpointercapture", stopMathPointer);
+document.querySelector("#math-eraser").addEventListener("click", (event) => {
+  const enabled = event.currentTarget.getAttribute("aria-pressed") !== "true";
+  event.currentTarget.setAttribute("aria-pressed", String(enabled));
+  event.currentTarget.classList.toggle("tool-active", enabled);
+});
+document.querySelector("#math-undo").addEventListener("click", () => {
+  if (!mathStrokes.length) return;
+  undoneMathStrokes.push(mathStrokes.pop());
+  renderMathCanvas();
+  updateMathHistoryControls();
+});
+document.querySelector("#math-redo").addEventListener("click", () => {
+  if (!undoneMathStrokes.length) return;
+  mathStrokes.push(undoneMathStrokes.pop());
+  renderMathCanvas();
+  updateMathHistoryControls();
+});
+document.querySelector("#math-theme-toggle").addEventListener("click", (event) => {
+  const light = document.body.classList.toggle("math-light");
+  event.currentTarget.textContent = light ? "Modo oscuro" : "Modo claro";
+  event.currentTarget.setAttribute("aria-pressed", String(light));
+  const penColor = document.querySelector("#math-pen-color");
+  if (penColor.value.toLowerCase() === (light ? "#e7ddf6" : "#342541")) {
+    penColor.value = light ? "#342541" : "#e7ddf6";
+  }
+  if (!document.querySelector("#math-graph-panel").hidden) {
+    drawMathGraph(document.querySelector("#math-expression").value.trim());
+  }
+});
+
+function setMathHeaderHidden(hidden) {
+  const header = document.querySelector("#math-header");
+  const controls = document.querySelector("#math-controls");
+  const toggle = document.querySelector("#math-header-toggle");
+  header.hidden = hidden;
+  controls.hidden = hidden;
+  toggle.setAttribute("aria-expanded", String(!hidden));
+  toggle.textContent = hidden ? "Mostrar título y herramientas" : "Ocultar título y herramientas";
+  toggle.title = hidden ? "Mostrar el título y las herramientas de Canvas Math" : "Ocultar el título y las herramientas de Canvas Math";
 }
-document.querySelector("#canvas-ink").addEventListener("pointerup", stopCanvasStroke);
-document.querySelector("#canvas-ink").addEventListener("pointercancel", stopCanvasStroke);
+
+document.querySelector("#math-header-toggle").addEventListener("click", (event) => {
+  const hidden = event.currentTarget.getAttribute("aria-expanded") === "true";
+  setMathHeaderHidden(hidden);
+  saveStored(STORAGE_KEYS.mathHeaderHidden, hidden);
+});
+
+function tokenizeMathExpression(expression) {
+  const source = expression
+    .replace(/[×·]/g, "*")
+    .replace(/[÷]/g, "/")
+    .replace(/[−–]/g, "-")
+    .replace(/,/g, ".")
+    .replace(/(\d)(x)/gi, "$1*$2")
+    .replace(/(x)(\d)/gi, "$1*$2")
+    .replace(/(\))(\d|x|\()/gi, "$1*$2")
+    .replace(/(\d|x)(\()/gi, "$1*$2")
+    .replace(/y\s*=/i, "");
+  const tokens = source.match(/(?:\d+(?:\.\d*)?|\.\d+)|x|[()+\-*/^=]/gi);
+  if (!tokens || tokens.join("").replace(/\s/g, "") !== source.replace(/\s/g, "")) {
+    throw new Error("No reconocí esa expresión. Revisa números y operadores.");
+  }
+  return tokens.map((token) => token.toLowerCase());
+}
+
+function parseMathExpression(expression, xValue = 0) {
+  const tokens = tokenizeMathExpression(expression);
+  let position = 0;
+  const peek = () => tokens[position];
+  const consume = () => tokens[position++];
+  function primary() {
+    const token = consume();
+    if (token === "(") {
+      const value = addSubtract();
+      if (consume() !== ")") throw new Error("Falta cerrar un paréntesis.");
+      return value;
+    }
+    if (token === "x") return xValue;
+    if (token && /^(\d+\.?\d*|\.\d+)$/.test(token)) return Number(token);
+    throw new Error("La expresión está incompleta o contiene un símbolo no permitido.");
+  }
+  function power() {
+    const base = primary();
+    if (peek() === "^") {
+      consume();
+      return base ** unary();
+    }
+    return base;
+  }
+  function unary() {
+    if (peek() === "+") {
+      consume();
+      return unary();
+    }
+    if (peek() === "-") {
+      consume();
+      return -unary();
+    }
+    return power();
+  }
+  function multiplyDivide() {
+    let value = unary();
+    while (peek() === "*" || peek() === "/") {
+      const operator = consume();
+      const right = unary();
+      value = operator === "*" ? value * right : value / right;
+    }
+    return value;
+  }
+  function addSubtract() {
+    let value = multiplyDivide();
+    while (peek() === "+" || peek() === "-") {
+      const operator = consume();
+      const right = multiplyDivide();
+      value = operator === "+" ? value + right : value - right;
+    }
+    return value;
+  }
+  const result = addSubtract();
+  if (position !== tokens.length) throw new Error("No pude interpretar toda la expresión.");
+  if (!Number.isFinite(result)) throw new Error("La operación no tiene un resultado finito.");
+  return result;
+}
+
+function getMathFunction(expression) {
+  const normalized = expression.replace(/y\s*=/i, "").trim();
+  const equation = normalized.split("=");
+  if (equation.length > 2) throw new Error("Escribe solo un signo igual.");
+  return (x) => {
+    if (equation.length === 2) return parseMathExpression(equation[0], x) - parseMathExpression(equation[1], x);
+    return parseMathExpression(normalized, x);
+  };
+}
+
+function findMathRoots(expression) {
+  const fn = getMathFunction(expression);
+  const roots = [];
+  const start = -100;
+  const end = 100;
+  const step = 0.25;
+  let previousX = start;
+  let previousY = fn(previousX);
+  for (let x = start + step; x <= end; x += step) {
+    const y = fn(x);
+    if (!Number.isFinite(y)) {
+      previousX = x;
+      previousY = y;
+      continue;
+    }
+    if (Math.abs(y) < 1e-8) roots.push(x);
+    else if (Number.isFinite(previousY) && previousY * y < 0) {
+      let low = previousX;
+      let high = x;
+      let lowY = previousY;
+      for (let iteration = 0; iteration < 40; iteration += 1) {
+        const middle = (low + high) / 2;
+        const middleY = fn(middle);
+        if (Math.abs(middleY) < 1e-10) {
+          low = middle;
+          high = middle;
+          break;
+        }
+        if (lowY * middleY <= 0) high = middle;
+        else {
+          low = middle;
+          lowY = middleY;
+        }
+      }
+      roots.push((low + high) / 2);
+    }
+    previousX = x;
+    previousY = y;
+  }
+  return roots.filter((root, index) => roots.findIndex((other) => Math.abs(root - other) < 0.02) === index);
+}
+
+function resolveMathExpression() {
+  const expression = document.querySelector("#math-expression").value.trim();
+  const status = document.querySelector("#math-status");
+  const answer = document.querySelector("#math-answer");
+  if (!expression) {
+    status.textContent = "Escribe la operación o ecuación en el campo Expresión.";
+    document.querySelector("#math-expression").focus();
+    return;
+  }
+  try {
+    const hasVariable = /x/i.test(expression);
+    const hasEquals = expression.includes("=");
+    const isFunction = /^\s*y\s*=/i.test(expression);
+    let resultText;
+    if (isFunction) {
+      resultText = expression.replace(/^\s*y\s*=\s*/i, "y = ");
+      status.textContent = "Función lista para graficar. Abre el panel Gráfico para explorarla.";
+    } else if (hasEquals && hasVariable) {
+      const roots = findMathRoots(expression);
+      if (!roots.length) throw new Error("No encontré soluciones reales entre -100 y 100.");
+      resultText = roots.map((root) => `x ≈ ${Number(root.toFixed(4))}`).join(", ");
+      status.textContent = `Ecuación resuelta numéricamente. Revisé valores entre -100 y 100. Soluciones: ${resultText}`;
+    } else if (hasEquals) {
+      const [left, right] = expression.split("=");
+      if (parseMathExpression(left) !== parseMathExpression(right)) {
+        status.textContent = `La igualdad es falsa: ${parseMathExpression(left)} ≠ ${parseMathExpression(right)}.`;
+        resultText = "falso";
+      } else {
+        status.textContent = `La igualdad es verdadera: ambos lados valen ${parseMathExpression(left)}.`;
+        resultText = String(parseMathExpression(left));
+      }
+    } else if (hasVariable) {
+      resultText = `y = ${expression.replace(/^y\s*=\s*/i, "")}`;
+      status.textContent = "Función lista para graficar. Abre el panel Gráfico para explorarla.";
+    } else {
+      resultText = String(Number(parseMathExpression(expression).toPrecision(10)));
+      status.textContent = "Operación resuelta.";
+    }
+    answer.textContent = resultText;
+    mathAnswerText = resultText;
+    mathAnswerProgress = 0;
+    renderMathCanvas();
+    animateMathAnswer();
+    if (hasVariable) {
+      document.querySelector("#math-graph-panel").hidden = false;
+      document.querySelector("#math-graph-toggle").setAttribute("aria-expanded", "true");
+      drawMathGraph(expression);
+    } else {
+      document.querySelector("#math-graph-panel").hidden = true;
+      document.querySelector("#math-graph-toggle").setAttribute("aria-expanded", "false");
+    }
+  } catch (error) {
+    answer.textContent = "";
+    mathAnswerText = "";
+    status.textContent = error.message || "No pude resolver la expresión. Puedes corregirla e intentarlo de nuevo.";
+    renderMathCanvas();
+  }
+}
+
+function animateMathAnswer() {
+  const started = performance.now();
+  const duration = Math.max(280, mathAnswerText.length * 55);
+  function frame(now) {
+    mathAnswerProgress = Math.min(1, (now - started) / duration);
+    renderMathCanvas();
+    if (mathAnswerProgress < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+document.querySelector("#math-solve").addEventListener("click", resolveMathExpression);
+document.querySelector("#math-expression").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") resolveMathExpression();
+});
+document.querySelector("#math-graph-toggle").addEventListener("click", (event) => {
+  const panel = document.querySelector("#math-graph-panel");
+  panel.hidden = !panel.hidden;
+  event.currentTarget.setAttribute("aria-expanded", String(!panel.hidden));
+  if (!panel.hidden && document.querySelector("#math-expression").value.trim()) {
+    drawMathGraph(document.querySelector("#math-expression").value.trim());
+  }
+});
+
+function drawMathGraph(expression) {
+  const canvas = document.querySelector("#math-graph");
+  const rect = canvas.getBoundingClientRect();
+  if (!rect.width || !rect.height) return;
+  const ratio = window.devicePixelRatio || 1;
+  canvas.width = Math.round(rect.width * ratio);
+  canvas.height = Math.round(rect.height * ratio);
+  const context = canvas.getContext("2d");
+  context.setTransform(ratio, 0, 0, ratio, 0, 0);
+  const width = rect.width;
+  const height = rect.height;
+  const scale = 34 * mathGraphScale;
+  const originX = width / 2 + mathGraphOffset.x;
+  const originY = height / 2 + mathGraphOffset.y;
+  const light = document.body.classList.contains("math-light");
+  context.clearRect(0, 0, width, height);
+  context.fillStyle = light ? "#fff" : "#12101a";
+  context.fillRect(0, 0, width, height);
+  context.strokeStyle = light ? "#e8e4ef" : "#2b2435";
+  context.lineWidth = 1;
+  for (let x = originX % scale; x < width; x += scale) {
+    context.beginPath(); context.moveTo(x, 0); context.lineTo(x, height); context.stroke();
+  }
+  for (let y = originY % scale; y < height; y += scale) {
+    context.beginPath(); context.moveTo(0, y); context.lineTo(width, y); context.stroke();
+  }
+  context.strokeStyle = light ? "#777180" : "#9b8ba9";
+  context.beginPath(); context.moveTo(0, originY); context.lineTo(width, originY); context.stroke();
+  context.beginPath(); context.moveTo(originX, 0); context.lineTo(originX, height); context.stroke();
+  try {
+    const fn = getMathFunction(expression);
+    context.beginPath();
+    context.strokeStyle = "#ad80f5";
+    context.lineWidth = 2.5;
+    let connected = false;
+    for (let pixelX = 0; pixelX <= width; pixelX += 1) {
+      const x = (pixelX - originX) / scale;
+      const yValue = fn(x);
+      const pixelY = originY - yValue * scale;
+      if (!Number.isFinite(pixelY) || Math.abs(pixelY) > height * 8) {
+        connected = false;
+        continue;
+      }
+      if (connected) context.lineTo(pixelX, pixelY);
+      else { context.moveTo(pixelX, pixelY); connected = true; }
+    }
+    context.stroke();
+    findMathRoots(expression).forEach((root) => {
+      const x = originX + root * scale;
+      if (x < 0 || x > width) return;
+      context.beginPath();
+      context.arc(x, originY, 4, 0, Math.PI * 2);
+      context.fillStyle = "#ffd166";
+      context.fill();
+    });
+    document.querySelector("#math-graph-coordinates").textContent = expression.includes("=") && !/^\s*y\s*=/i.test(expression)
+      ? "Se muestran los cruces de la ecuación con el eje x."
+      : "Función graficada. Acerca con la rueda y arrastra para desplazarte.";
+  } catch (error) {
+    document.querySelector("#math-graph-coordinates").textContent = error.message;
+  }
+}
+
+document.querySelector("#math-graph").addEventListener("pointerdown", (event) => {
+  const canvas = event.currentTarget;
+  mathGraphPointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
+  canvas.setPointerCapture(event.pointerId);
+});
+document.querySelector("#math-graph").addEventListener("pointermove", (event) => {
+  const rect = event.currentTarget.getBoundingClientRect();
+  if (mathGraphPointer && mathGraphPointer.id === event.pointerId) {
+    mathGraphOffset.x += event.clientX - mathGraphPointer.x;
+    mathGraphOffset.y += event.clientY - mathGraphPointer.y;
+    mathGraphPointer.x = event.clientX;
+    mathGraphPointer.y = event.clientY;
+    drawMathGraph(document.querySelector("#math-expression").value.trim());
+    return;
+  }
+  const scale = 34 * mathGraphScale;
+  const x = (event.clientX - rect.left - rect.width / 2 - mathGraphOffset.x) / scale;
+  const y = (rect.height / 2 + mathGraphOffset.y - (event.clientY - rect.top)) / scale;
+  document.querySelector("#math-graph-coordinates").textContent = `x = ${x.toFixed(2)}, y = ${y.toFixed(2)}`;
+});
+document.querySelector("#math-graph").addEventListener("pointerup", () => { mathGraphPointer = null; });
+document.querySelector("#math-graph").addEventListener("pointercancel", () => { mathGraphPointer = null; });
+document.querySelector("#math-graph").addEventListener("wheel", (event) => {
+  event.preventDefault();
+  mathGraphScale = Math.min(5, Math.max(0.35, mathGraphScale * (event.deltaY < 0 ? 1.12 : 0.89)));
+  drawMathGraph(document.querySelector("#math-expression").value.trim());
+}, { passive: false });
+
 new ResizeObserver(resizeInkCanvas).observe(document.querySelector("#canvas-sheet"));
+new ResizeObserver(() => {
+  const expression = document.querySelector("#math-expression").value.trim();
+  if (!document.querySelector("#math-graph-panel").hidden && expression) drawMathGraph(expression);
+}).observe(document.querySelector("#math-graph"));
 window.addEventListener("resize", () => requestAnimationFrame(() => requestAnimationFrame(fitWindowsToArea)));
 new ResizeObserver(fitWindowsToArea).observe(document.querySelector("#windows-area"));
-document.addEventListener("keydown", (event) => {
-  if (event.key.toLowerCase() !== "p" || event.repeat || event.ctrlKey || event.altKey || event.metaKey) {
-    lastCanvasClearKey = 0;
-    return;
-  }
-  const target = event.target;
-  if (target instanceof HTMLElement && (target.isContentEditable || target.closest("input, textarea, select"))) {
-    lastCanvasClearKey = 0;
-    return;
-  }
-  if (!canvasIsDrawing) {
-    lastCanvasClearKey = 0;
-    return;
-  }
-  const now = Date.now();
-  if (now - lastCanvasClearKey <= 500 && lastCanvasClearKey !== 0) {
-    event.preventDefault();
-    lastCanvasClearKey = 0;
-    clearInkCanvas();
-    return;
-  }
-  lastCanvasClearKey = now;
-});
 
 document.querySelectorAll("[data-mood]").forEach((button) => {
   button.addEventListener("click", () => {
@@ -1114,6 +1557,7 @@ document.querySelectorAll("[data-mood]").forEach((button) => {
     showToast("Tu check-in quedó guardado en tu espacio.");
   });
 });
+
 document.querySelector("#study-action").addEventListener("click", () => showToast("Tu sesión de estudio está lista. ¡25 minutos para ti!"));
 document.querySelector("#finance-action").addEventListener("click", () => showToast("Tu avance quedó anotado. Cada paso cuenta."));
 document.querySelector("#fun-action").addEventListener("click", () => {
@@ -1139,7 +1583,6 @@ function updateSettingsSaveState() {
 
 function openSettings() {
   const user = getStored(STORAGE_KEYS.account) || getStored(STORAGE_KEYS.user);
-  const settings = getStored(STORAGE_KEYS.settings, {});
   if (!user) {
     showToast("Inicia sesión para modificar tus ajustes.");
     return;
@@ -1149,7 +1592,6 @@ function openSettings() {
   settingsSaving = false;
   settingsDraft = {
     profileImage: user.profileImage || null,
-    canvasImage: settings?.canvasImage || null,
   };
   document.querySelector("#settings-name").value = user.name || "";
   document.querySelector("#settings-email").value = user.email || "";
@@ -1157,10 +1599,8 @@ function openSettings() {
   document.querySelector("#settings-new-password").value = "";
   document.querySelector("#settings-confirm-password").value = "";
   document.querySelector("#settings-avatar-file").value = "";
-  document.querySelector("#settings-canvas-file").value = "";
   document.querySelector("#settings-error").textContent = "";
   renderSettingsAvatar(settingsDraft.profileImage, user.name);
-  renderCanvasPreview(settingsDraft.canvasImage);
   document.querySelector("#settings-dialog").classList.remove("hidden");
   document.querySelector("#settings-name").focus();
 }
@@ -1185,11 +1625,6 @@ function renderSettingsAvatar(image, name = "K") {
     fallback.textContent = (name || "K").slice(0, 1).toUpperCase();
     fallback.classList.remove("hidden");
   }
-}
-
-function renderCanvasPreview(image) {
-  const source = image || "Jupiter.png";
-  document.querySelector("#canvas-image-preview").style.backgroundImage = `url("${source}")`;
 }
 
 async function compressImage(file, maxWidth, maxHeight) {
@@ -1247,34 +1682,8 @@ document.querySelector("#settings-avatar-file").addEventListener("change", async
     updateSettingsSaveState();
   }
 });
-document.querySelector("#settings-canvas-file").addEventListener("change", async (event) => {
-  const file = event.target.files[0];
-  if (!file) return;
-  const generation = settingsGeneration;
-  settingsImageProcessing += 1;
-  updateSettingsSaveState();
-  try {
-    const image = await compressImage(file, 1920, 1440);
-    if (generation === settingsGeneration) {
-      settingsDraft.canvasImage = image;
-      renderCanvasPreview(image);
-      showSettingsError("");
-    }
-  } catch (error) {
-    if (generation === settingsGeneration) showSettingsError(error.message || "No se pudo procesar la foto del lienzo.");
-  } finally {
-    settingsImageProcessing -= 1;
-    updateSettingsSaveState();
-  }
-});
 document.querySelector("#settings-name").addEventListener("input", (event) => {
   if (!settingsDraft.profileImage) renderSettingsAvatar(null, event.target.value);
-});
-document.querySelector("#reset-canvas-image").addEventListener("click", () => {
-  settingsDraft.canvasImage = null;
-  renderCanvasPreview(null);
-  document.querySelector("#settings-canvas-file").value = "";
-  showSettingsError("");
 });
 document.querySelector("#settings-form").addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -1341,6 +1750,13 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
   try {
     const previousAccount = account;
     const previousSession = user;
+    const previousAccounts = getLocalAccounts();
+    const existingName = account.name.trim().toLocaleLowerCase();
+    const conflictingAccount = findLocalAccount(previousAccounts, name);
+    if (conflictingAccount && conflictingAccount.name.trim().toLocaleLowerCase() !== existingName) {
+      showSettingsError("Ese nombre de usuario ya está registrado en este dispositivo.");
+      return;
+    }
     const updatedUser = {
       ...account,
       name,
@@ -1349,13 +1765,22 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
     if (settingsDraft.profileImage) updatedUser.profileImage = settingsDraft.profileImage;
     else delete updatedUser.profileImage;
     if (newPassword) updatedUser.credential = await createPasswordCredential(newPassword);
-    if (!saveStored(STORAGE_KEYS.account, updatedUser)) {
+    const updatedAccounts = previousAccounts.map((entry) =>
+      entry.name.trim().toLocaleLowerCase() === existingName ? updatedUser : entry
+    );
+    if (!saveStored(STORAGE_KEYS.accounts, updatedAccounts)) {
       showSettingsError("No se pudieron guardar los datos de cuenta en este dispositivo.");
       return;
     }
-    const updatedSession = { name: updatedUser.name, created: updatedUser.created };
+    if (!saveStored(STORAGE_KEYS.account, updatedUser)) {
+      saveStored(STORAGE_KEYS.accounts, previousAccounts);
+      showSettingsError("No se pudieron guardar los datos de cuenta en este dispositivo.");
+      return;
+    }
+    const updatedSession = { id: updatedUser.id, name: updatedUser.name, created: updatedUser.created };
     if (!saveStored(STORAGE_KEYS.user, updatedSession)) {
       try {
+        localStorage.setItem(STORAGE_KEYS.accounts, JSON.stringify(previousAccounts));
         localStorage.setItem(STORAGE_KEYS.account, JSON.stringify(previousAccount));
         localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(previousSession));
       } catch (rollbackError) {
@@ -1364,23 +1789,7 @@ document.querySelector("#settings-form").addEventListener("submit", async (event
       showSettingsError("No se pudieron guardar los datos de sesión en este dispositivo.");
       return;
     }
-
-    const storedSettings = getStored(STORAGE_KEYS.settings, {}) || {};
-    const updatedSettings = { ...storedSettings };
-    if (settingsDraft.canvasImage) updatedSettings.canvasImage = settingsDraft.canvasImage;
-    else delete updatedSettings.canvasImage;
-    if (!saveStored(STORAGE_KEYS.settings, updatedSettings)) {
-      try {
-        localStorage.setItem(STORAGE_KEYS.account, JSON.stringify(previousAccount));
-        localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(previousSession));
-      } catch (rollbackError) {
-        console.error("No se pudo revertir la cuenta después de un error al guardar los ajustes.", rollbackError);
-      }
-      showSettingsError("No se pudieron guardar los cambios. Libera espacio del navegador e inténtalo de nuevo.");
-      return;
-    }
     renderProfileButton(updatedUser);
-    applyWorkspaceImage();
     closeSettings();
     showToast("Tus ajustes se guardaron en este dispositivo.");
   } catch (saveError) {
@@ -1400,7 +1809,30 @@ document.querySelector("#profile-button").addEventListener("click", openProfile)
 
 const existingUser = getStored(STORAGE_KEYS.user);
 if (existingUser) {
-  const profile = getStored(STORAGE_KEYS.profile);
   const account = getStored(STORAGE_KEYS.account) || existingUser;
-  if (profile) enterDashboard(account, profile);
+  const accounts = getLocalAccounts();
+  const registeredAccount = findLocalAccount(accounts, existingUser.name);
+  const activeAccount = registeredAccount || account;
+  if (activeAccount.credential && activeAccount.name.trim().toLocaleLowerCase() === existingUser.name.trim().toLocaleLowerCase()) {
+    activeAccount.id = activeAccount.id || existingUser.id || createLocalAccountId();
+    const activeIndex = accounts.findIndex((entry) => entry.name.trim().toLocaleLowerCase() === activeAccount.name.trim().toLocaleLowerCase());
+    if (activeIndex >= 0) accounts[activeIndex] = activeAccount;
+    else accounts.push(activeAccount);
+    const activeSession = { ...existingUser, id: activeAccount.id };
+    if (!saveStored(STORAGE_KEYS.accounts, accounts)) {
+      removeStored(STORAGE_KEYS.user);
+    } else if (!migrateLegacyUserData(activeAccount)) {
+      removeStored(STORAGE_KEYS.user);
+    } else {
+      if (!saveStored(STORAGE_KEYS.account, activeAccount) ||
+        !saveStored(STORAGE_KEYS.user, activeSession)) {
+        removeStored(STORAGE_KEYS.user);
+      } else {
+        const profile = getStored(STORAGE_KEYS.profile);
+        if (profile) enterDashboard(activeAccount, profile);
+      }
+    }
+  } else {
+    removeStored(STORAGE_KEYS.user);
+  }
 }
